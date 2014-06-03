@@ -1,0 +1,725 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:camel="http://camel.apache.org/schema/spring"
+    xmlns:util="http://www.springframework.org/schema/util"
+    xmlns:sec="http://schemas.sirsidynix.com/symws/security"
+    xmlns:pat="http://schemas.sirsidynix.com/symws/patron"
+    xmlns:sta="http://schemas.sirsidynix.com/symws/standard"
+    xmlns:com="http://schemas.sirsidynix.com/symws/common"
+    xmlns:cir="http://schemas.sirsidynix.com/symws/circulation" 
+    xmlns:adm="http://schemas.sirsidynix.com/symws/admin"
+    xsi:schemaLocation="http://www.springframework.org/schema/beans
+                        http://www.springframework.org/schema/beans/spring-beans.xsd 
+                        http://www.springframework.org/schema/util 
+                        http://www.springframework.org/schema/util/spring-util-3.0.xsd 
+                        http://camel.apache.org/schema/spring 
+                        http://camel.apache.org/schema/spring/camel-spring.xsd">
+	
+	
+	<!-- RAW, UN-POOLED CONNECTION - DO NOT USE IN PRODUCTION -->
+ 	
+    <bean id="sirsioracle" class="org.springframework.jdbc.datasource.DriverManagerDataSource"> 
+      <property name="driverClassName" value="oracle.jdbc.OracleDriver" />
+      <property name="url" value="jdbc:oracle:thin:@heze.lib.virginia.edu:1521:sirsiprod" /> 
+      <property name="username" value="firehose" />
+      <property name="password" value="es0her1f" />
+    </bean>
+
+   <!-- CONNECTION POOLING FOR PRODUCTION -->
+   
+   <bean id="sirsioracle_connection_pool" class="org.apache.commons.dbcp.BasicDataSource" destroy-method="close" >
+	  <property name="driverClassName" value="oracle.jdbc.OracleDriver" />
+	  <property name="url" value="jdbc:oracle:thin:@heze.lib.virginia.edu:1521:sirsiprod" />
+      <property name="username" value="firehose" />
+      <property name="password" value="es0her1f" />
+      <property name="initialSize" value="5" />
+	  <property name="minIdle" value="5" />
+	  <property name="maxActive" value="30" />
+	  <property name="maxWait" value="10000" />
+	  <property name="testWhileIdle" value="true" />	  
+	  <property name="testOnBorrow" value="false" />
+	  <property name="testOnReturn" value="false" />
+	  <!-- <property name="validationInterval" value="15000" /> throwing errors, need to find correct syntax -->
+	  <property name="timeBetweenEvictionRunsMillis" value="5000" />
+	  <property name="removeAbandonedTimeout" value="10" />
+	  <property name="removeAbandoned" value="true" />
+	  <property name="logAbandoned" value="true" />
+	  <property name="minEvictableIdleTimeMillis" value="5000" />
+	</bean>
+   
+
+   <!-- 
+   	#
+   	#	Beans to implement a RESTFUL interface
+   	#
+   	#	 
+   -->
+   
+    <bean id="RestletComponent" class="org.restlet.Component" />
+ 
+    <bean id="RestletComponentService" class="org.apache.camel.component.restlet.RestletComponent">
+       <constructor-arg index="0">
+         <ref bean="RestletComponent" />
+       </constructor-arg>
+    </bean>        
+    
+ 
+ 	<!-- 
+   	#
+   	#	Bean to drive a graceful rapid shutdown, much faster than default.
+   	#
+   	#	 
+   -->
+   
+    
+    <bean id="shutdown" class="org.apache.camel.impl.DefaultShutdownStrategy">
+    	<property name="timeout" value="10"/>
+  	</bean>
+    
+    <!-- 
+   	#
+   	#	Bean to hold current Session Token from Sirsi
+   	#
+   	#	 
+   -->
+   
+    <bean id="GodToken" class="edu.virginia.lib.firehose3.GodToken" />
+   
+   <!-- 
+   	#
+   	#	Bean for default StandardRouteBuilder
+   	#
+   	#	 
+   -->
+     
+    <bean class="edu.virginia.lib.firehose3.StandardRouteBuilder"
+        id="standardRouteBuilder" />
+   
+   <!-- 
+   	#
+   	#	Beans for specific types if needed ( Patron, Policies ) 
+   	#
+   	#	 
+   -->
+        
+    <bean class="edu.virginia.lib.firehose3.RouteBuilder_Patron"
+        id="patronRouteBuilder" />
+            
+    <bean class="edu.virginia.lib.firehose3.RouteBuilder_Policies"
+        id="policiesRouteBuilder" />
+
+   <!-- 
+   	#
+   	#	Bean for non specific actions and utilities
+   	#
+   	#	 
+   -->
+   
+
+    <bean id="enrichBean" class="edu.virginia.lib.firehose3.EnrichBean"/>
+ 
+    <!-- 
+   	#
+   	#	Initialize the Camel Context and declare any Java routebuilders
+   	#
+   	#	 
+   -->
+    
+     
+    <camelContext id="camel" trace="true" streamCache="true" xmlns="http://camel.apache.org/schema/spring" >
+     <camel:routeBuilder ref="standardRouteBuilder"/>
+     <camel:routeBuilder ref="patronRouteBuilder"/>
+
+     
+    <!-- 
+   	#
+   	#	Declare XStream, should not need
+   	#
+   	#	 
+   -->
+    
+    <dataFormats>
+      <xstream id="xstream-utf8" encoding="UTF-8" />
+      <xstream id="xstream-default"/>
+      
+    </dataFormats>    
+     
+       
+ 
+<!--
+=================================================================================
+      
+      Internal : sessionTokenTimer 
+      Timers for Web AND Java Session Token Renewals
+      
+=================================================================================
+-->  
+    
+    <route id="sessionTokenTimer_RenewWebLogin" xmlns="http://camel.apache.org/schema/spring" trace="true">
+      <from uri="timer://renewWebLogin?fixedRate=true&amp;period=1140000"/>
+      <to uri="direct:getWebSULogin"/>
+    </route>    
+    
+<!--
+=================================================================================
+      
+      Internal Direct : Login WEB Super User
+      Gets and stores Session Token in a bean based on a polling timer
+      
+      Parameters:
+        clientID :  Sirst Staff Level Client ID
+        login    :  Sirsi ILS Station User ID
+        password :  Sirsi ILS Station Login User Access Code
+        
+=================================================================================
+-->  
+    
+    <route id="getWebSULogin" xmlns="http://camel.apache.org/schema/spring" trace="true" streamCache="true">
+           
+      <from uri="direct:getWebSULogin"/>
+      <log message="getWebSULogin fired"/>
+      <setHeader headerName="CamelHttpMethod">
+        <constant>GET</constant>
+      </setHeader>
+      <setHeader headerName="x-sirs-clientID">
+        <constant>SymWSTestClient</constant>
+      </setHeader>
+      <setHeader headerName="CamelHttpUri">
+        <constant>http://libsvr41.lib.virginia.edu:8083/sirsiws/rest/security/loginUser</constant> 
+      </setHeader>
+      <setHeader headerName="CamelHttpQuery">
+        <simple>login=WEBSERVICES&amp;password=WEBS12&amp;clientID=SymWSTestClient</simple> 
+      </setHeader>
+      <setHeader headerName="Accept">
+        <constant>application/xml</constant>
+      </setHeader>
+      
+      <to uri="http://mybogusaddress.com"/>
+     
+      <choice>
+        <when>
+          <xpath logNamespaces="true" resultType="String">/sec:LoginUserResponse/sec:sessionToken</xpath>
+          <setHeader headerName="stoken">
+            <xpath logNamespaces="true" resultType="String">/sec:LoginUserResponse/sec:sessionToken/text()</xpath>
+          </setHeader>
+          <log message="~~NEW WEB SESSION : ${headers.stoken}"/>
+          <to uri="bean:GodToken?method=setCurrentWebSessionToken(${header.stoken})" />
+        </when>
+        <otherwise>
+        <log message="ERROR LOGINUSER: ${in.body}" />
+          <transform>
+            <constant>ERROR - NO XPATH sessionToken</constant>
+          </transform>
+        </otherwise>
+      </choice>
+    </route>
+    
+<!--
+=================================================================================
+
+    Direct : oracle_usertable_data
+    Route to Oracle to get patron personal information and ID's.
+
+    Sirsi sometimes wants a userID, other times a userKey ( db auto increment field ) 
+    or alternateID ( usually UVA Computing ID ). This call can take any of the three 
+    forms of ID and will return values for the other two as well, so this call will 
+    be used first in many routes in order to get the required mapping from one 
+    "sirsi identifier" to the other.
+    
+     Parameters: ( pass only one by name in header )
+      
+        computingID :  UVA Computing ID
+              * OR * 
+        userKey     :  Sirsi assigned value
+              * OR *
+        userID      :  UVA Numeric ID
+    
+=================================================================================
+-->  
+
+    <route id="oracle_usertable_data" xmlns="http://camel.apache.org/schema/spring" trace="true">
+      <from uri="direct:oracle_usertable_data"/>
+        <choice>
+      	  <when>
+      	    <simple>${headers.computingID}</simple> 
+      	    <log message="COMPUTING ID FIRED!"></log>
+		      <setBody>
+		        <simple>select su.user_key, su.id, su.alternative_id, su.pin, su.category1, su.category5, su.profile, su.status, sus.delinquent, su.first_name, su.middle_name, su.name, su.department from sirsi.users su, sirsi.userstatus sus where sus.user_key = su.user_key and su.alternative_id = '${headers.computingID}'</simple>
+		      </setBody>
+      	  </when>
+          <when>
+      	    <simple>${headers.userKey}</simple>
+      	    <log message="USER KEY FIRED!"></log>
+		      <setBody>
+		        <simple>select su.user_key, su.id, su.alternative_id, su.pin, su.category1, su.category5, su.profile, su.status, sus.delinquent, su.first_name, su.middle_name, su.name, su.department from sirsi.users su, sirsi.userstatus sus where sus.user_key = su.user_key and su.user_key = '${headers.userKey}'</simple>
+		      </setBody>
+      	  </when>
+  		  <when>
+      		<simple>${headers.userID}</simple>
+  		    <log message="USER ID FIRED!"></log>
+		      <setBody>
+		        <simple>select su.user_key, su.id, su.alternative_id, su.pin, su.category1, su.category5, su.profile, su.status, sus.delinquent, su.first_name, su.middle_name, su.name, su.department from sirsi.users su, sirsi.userstatus sus where sus.user_key = su.user_key and su.id = '${headers.userID}'</simple>
+		      </setBody>
+      	  </when>
+          <otherwise>
+            <transform>
+              <constant>No accepted ID (userID, userKey or computingID) was provided.</constant>
+            </transform>
+          </otherwise>
+        </choice>
+      <to uri="jdbc:sirsioracle"/>
+      <setHeader headerName="usrkey">
+        <simple>${body[0][USER_KEY]}</simple>
+      </setHeader>
+      <setHeader headerName="usrid">
+        <simple>${body[0][ID]}</simple>
+      </setHeader>
+      <setHeader headerName="usraltid">
+        <simple>${body[0][ALTERNATIVE_ID]}</simple>
+      </setHeader>
+      <setHeader headerName="upin">
+        <simple>${body[0][PIN]}</simple>
+      </setHeader>
+      <setHeader headerName="ufname">
+        <simple>${body[0][FIRST_NAME]}</simple>
+      </setHeader>
+      <setHeader headerName="umname">
+        <simple>${body[0][MIDDLE_NAME]}</simple>
+      </setHeader>
+      <setHeader headerName="ulname">
+        <simple>${body[0][NAME]}</simple>
+      </setHeader>
+      <setHeader headerName="ucat1">
+        <simple>${body[0][CATEGORY1]}</simple>
+      </setHeader>
+      <setHeader headerName="ucat5">
+        <simple>${body[0][CATEGORY5]}</simple>
+      </setHeader>
+      <setHeader headerName="uprofile">
+        <simple>${body[0][PROFILE]}</simple>
+      </setHeader>
+      <setHeader headerName="ustatus">
+        <simple>${body[0][STATUS]}</simple>
+      </setHeader>
+      <setHeader headerName="udelinquent">
+        <simple>${body[0][DELINQUENT]}</simple>
+      </setHeader>
+      <setHeader headerName="udepartment">
+        <simple>${body[0][DEPARTMENT]}</simple>
+      </setHeader>
+      
+      <log message="debug oracle_user_table fired : BODY = ${body} HEADER : ${headers.usrid}"/>
+    </route>
+
+<!--
+=================================================================================      
+      
+      Route : getItemInfo
+      Call to get catalog info about an item.
+      
+      Parameters : 
+        clientID        ->  Http Header
+        sessionToken    ->  Http Header
+        ** titleID and itemID are a choice. Specify a value for one or the other.
+        itemID(catkey)  ->  Query String
+        titleID         ->  Query String
+        
+        
+        * This route has recently changed with Sirsi WS 4.x as it now includes the
+        * "includeBoundTogether" directive. Removed all code that was pulling and blending data
+        * from Oracle as it is no longer needed.
+        
+        * Passed in Query String ( optional )
+        includeAvailabilityInfo
+        includeItemInfo
+        includeCatalogingInfo
+        includeOPACInfo
+        includeBoundTogether
+        includeCallNumberSummary
+        includeItemCategory
+        includeShadowed
+=================================================================================
+-->  
+
+
+<route id="getItemInfo" xmlns="http://camel.apache.org/schema/spring" trace="true">
+      <description>   
+              
+      </description>
+      <from uri="restlet:/lookupItemInfo/{itemID}?restletMethod=GET"/>
+		<choice>
+        	<when>
+        	  <simple>${headers.itemID}</simple>        
+	          <setHeader headerName="CamelHttpMethod">
+	            <constant>GET</constant>
+	          </setHeader>
+	          <setHeader headerName="x-sirs-clientID">
+	            <constant>SymWSTestClient</constant>
+	          </setHeader>
+	          <setHeader headerName="sessionToken">
+	            <method bean="GodToken" method="getCurrentWebSessionToken"/>
+	          </setHeader>
+	          <setHeader headerName="CamelHttpUri">
+	            <constant>http://libsvr41.lib.virginia.edu:8083/sirsiws/rest/standard/lookupItemInfo</constant>
+	          </setHeader>
+	          <setHeader headerName="CamelHttpQuery">
+	            <simple>userID=${headers.usrid}&amp;sessionToken=${headers.sessionToken}&amp;includeAvailabilityInfo=true&amp;includeItemInfo=true&amp;includeCatalogingInfo=true&amp;includeOPACInfo=true&amp;includeBoundTogether=true&amp;includeCallNumberSummary=true&amp;includeItemCategory=true&amp;includeShadowed=true</simple>
+	          </setHeader>
+	          <setHeader headerName="Content-Type">
+	            <constant>application/xml</constant>
+	          </setHeader>
+	          <setHeader headerName="Accept">
+	        	<constant>application/xml</constant>
+	      	  </setHeader>
+              <to uri="http://mybogusaddress.com"/>
+        </when>
+        <otherwise>
+          <transform>
+            <constant>No item or title ID was provided for lookupItemInfo call</constant>
+          </transform>
+        </otherwise>
+      </choice>
+    </route>
+
+
+<!--
+=================================================================================      
+      
+      Route : getPatronInfo
+      Call to get library patron info for /checkouts, /holds, /reserves
+      
+      Parameters : 
+        clientID      ->  Http Header
+        sessionToken  ->  Http Header
+        computingID   ->  Query String
+        output        ->  Query String
+        
+        *Passed in Query String ( optional ) 
+        includePatronInfo
+        includePatronCirculationInfo
+        includePatronAddressInfo
+        includePatronCheckoutInfo
+        includePatronCheckoutHistoryInfo
+        includePatronHoldInfo
+        includeFeeInfo=ALL_FEES_AND_PAYMENTS
+        includePatronStatusInfo
+        includeUserGroupInfo
+        includeUserSuspensionInfo
+=================================================================================
+-->  
+  
+    <route id="getPatronInfo" xmlns="http://camel.apache.org/schema/spring" trace="true">
+      <description>   
+              
+      </description>
+      <from uri="restlet:/lookupPatronInfo/{computingID}/{output}?restletMethod=GET"/>
+           
+      <choice>
+        <when>
+          <simple>${headers.computingID}</simple> 
+          <to uri="direct:oracle_usertable_data"/>
+          <setHeader headerName="usrid">
+            <simple>${body[0][ID]}</simple>
+          </setHeader>
+          <setHeader headerName="upin">
+            <simple>${body[0][PIN]}</simple>
+          </setHeader>
+          <setHeader headerName="ufname">
+            <simple>${body[0][FIRST_NAME]}</simple>
+          </setHeader>
+          <setHeader headerName="umname">
+            <simple>${body[0][MIDDLE_NAME]}</simple>
+          </setHeader>
+          <setHeader headerName="ulname">
+            <simple>${body[0][NAME]}</simple>
+          </setHeader>
+          <setHeader headerName="ucat1">
+            <simple>${body[0][CATEGORY1]}</simple>
+          </setHeader>
+          <setHeader headerName="ucat5">
+            <simple>${body[0][CATEGORY5]}</simple>
+          </setHeader>
+          <setHeader headerName="uprofile">
+            <simple>${body[0][PROFILE]}</simple>
+          </setHeader>
+          <setHeader headerName="ustatus">
+            <simple>${body[0][STATUS]}</simple>
+          </setHeader>
+          <setHeader headerName="udelinquent">
+            <simple>${body[0][DELINQUENT]}</simple>
+          </setHeader>
+          <setHeader headerName="udepartment">
+            <simple>${body[0][DEPARTMENT]}</simple>
+          </setHeader>
+          <setHeader headerName="CamelHttpMethod">
+            <constant>GET</constant>
+          </setHeader>
+          <setHeader headerName="x-sirs-clientID">
+            <constant>SymWSTestClient</constant>
+          </setHeader>
+          <setHeader headerName="sessionToken">
+            <method bean="GodToken" method="getCurrentWebSessionToken"/>
+          </setHeader>
+          <setHeader headerName="CamelHttpUri">
+            <constant>http://libsvr41.lib.virginia.edu:8083/sirsiws/rest/patron/lookupPatronInfo</constant>
+          </setHeader>
+          <setHeader headerName="CamelHttpQuery">
+            <simple>userID=${headers.usrid}&amp;sessionToken=${headers.sessionToken}&amp;includePatronInfo=true&amp;includePatronCirculationInfo=true&amp;includePatronAddressInfo=true&amp;includePatronCheckoutInfo=ALL&amp;includePatronCheckoutHistoryInfo=true&amp;includePatronHoldInfo=ALL&amp;includeFeeInfo=ALL_FEES_AND_PAYMENTS&amp;includePatronStatusInfo=true&amp;includeUserGroupInfo=true&amp;includeUserSuspensionInfo=true</simple>
+          </setHeader>
+          <setHeader headerName="Content-Type">
+            <constant>application/xml</constant>
+          </setHeader>
+          <setHeader headerName="Accept">
+        	<constant>application/xml</constant>
+      	  </setHeader>
+          <setBody><constant>null</constant></setBody>
+          <log message="~~Calling lookupPatronInfo with SESSION : ${headers.sessionToken}"/>
+          <to uri="http://mybogusaddress.com"/>
+          <choice>
+          	<when>
+          	  <simple>${headers.output} == 'all'</simple> 
+              <!--  just let it pass thru -->
+          	</when>
+          	<when>
+          	  <simple>${headers.output} == 'patron'</simple> 
+              <to uri="xslt:patronInfo.xsl"/> 	
+          	</when>
+          	<when>
+          	  <simple>${headers.output} == 'checkouts'</simple>
+          	  <to uri="xslt:checkoutInfo.xsl"/>
+          	  <to uri="bean:enrichBean?method=enrich(${body})"/> 
+          	</when>
+         	<when>
+          	  <simple>${headers.output} == 'holds'</simple>
+              <to uri="xslt:holdInfo.xsl"/> 	
+               <to uri="bean:enrichBean?method=enrich(${body})"/>
+          	</when>
+         	<when>
+          	  <simple>${headers.output} == 'reserves'</simple>
+              <to uri="xslt:reserveInfo.xsl"/> 	
+               <to uri="bean:enrichBean?method=enrich(${body})"/>
+          	</when>
+          	<otherwise>
+          		<!--   if 'all' is not specified this should pass full doc back -->
+          	</otherwise>
+          </choice>
+        </when>
+        <otherwise>
+          <transform>
+            <constant>No alternate ID (UVA Computing ID) Provided for lookupPatronInfo call</constant>
+          </transform>
+        </otherwise>
+      </choice>
+    </route>
+    
+<!--
+__________________________________________________________________________________
+__________________________________________________________________________________
+      
+      Route : getavail
+      
+      Call to get item availability information. The current firehose returns a very bloated doc with more
+      unused than used data. Working to only return the necessary data based on what elements are actually
+      used by Search application.
+      
+      Parameters : 
+        clientID          ->  Http Header
+        sessionToken      ->  Http Header
+        titleID (catkey)  ->  Query String
+
+		*Passed in Query String ( optional )
+        includeAvailabilityInfo
+        includeItemInfo
+        includeCatalogingInfo
+        includeOrderInfo
+        includeOPACInfo
+        includeCallNumberSummary
+__________________________________________________________________________________
+__________________________________________________________________________________
+-->  
+
+    <route id="getavail" xmlns="http://camel.apache.org/schema/spring" trace="true">
+        <from uri="restlet:http://0.0.0.0:8089/getAvailability/{ckey}?restletMethod=GET"/> 
+         <choice>
+           <when>
+             <simple>${headers.ckey}</simple>
+               <setHeader headerName="CamelHttpMethod">
+                 <constant>GET</constant>
+               </setHeader>
+               <setHeader headerName="x-sirs-clientID">
+                 <constant>SymWSTestClient</constant>
+               </setHeader>
+               <setHeader headerName="Accept">
+                 <constant>application/xml</constant>
+               </setHeader>
+               <setHeader headerName="CamelHttpUri">
+                 <!-- <constant>http://localhost:8080/sirsiws/rest/standard/lookupTitleInfo</constant> -->
+                 <constant>http://libsvr41.lib.virginia.edu:8083/sirsiws/rest/standard/lookupTitleInfo</constant>
+               </setHeader>
+               <setHeader headerName="CamelHttpQuery">
+                 <simple>titleID=${headers.ckey}&amp;includeAvailabilityInfo=true&amp;includeItemInfo=true&amp;includeCatalogingInfo=true&amp;includeOrderInfo=true&amp;includeOPACInfo=true&amp;includeCallNumberSummary=true</simple>
+               </setHeader>
+               <to uri="http://mybogusaddress.com"/>
+               <!-- 
+             <when>
+          	  <simple>${headers.output} != 'raw'</simple>
+               	<to uri="xslt:availability.xsl"/>  	
+          	</when>
+          	 -->
+          	 	<to uri="xslt:availability.xsl"/>
+    	</when>        
+           <otherwise>
+             <transform>
+	           <simple>No CKEY</simple>
+             </transform>
+           </otherwise>
+         </choice>
+    </route>
+    
+<!--
+__________________________________________________________________________________
+__________________________________________________________________________________
+      
+      Route : LookupLibraryPolicyListRequest
+      
+      Call to get a list of Libraries
+      
+      Parameters :
+        clientID          ->  Http Header
+        sessionToken      ->  Http Header
+__________________________________________________________________________________
+__________________________________________________________________________________
+-->  
+  
+
+    <route id="getLibraries" xmlns="http://camel.apache.org/schema/spring" trace="true">
+        <from uri="restlet:http://0.0.0.0:8089/lookupLibraryPolicyList?restletMethod=GET"/> 
+      
+        <log message= "getRequestTypes fired"/>
+         <setHeader headerName="CamelHttpMethod">
+            <constant>GET</constant>
+               </setHeader>
+               <setHeader headerName="x-sirs-clientID">
+                 <constant>SymWSTestClient</constant>
+               </setHeader>
+               <setHeader headerName="CamelHttpUri">
+                 <!-- <constant>http://localhost:8080/sirsiws/rest/admin/LookupRequestTypePolicyListRequest</constant> -->
+                 <constant>http://libsvr41.lib.virginia.edu:8083/sirsiws/rest/admin/lookupLibraryPolicyList</constant>
+               </setHeader>
+               
+               <setHeader headerName="x-sirs-policyID">
+                 <constant>1</constant>
+			   </setHeader>
+			   <setHeader headerName="Accept">
+        		<constant>application/xml</constant>
+      		   </setHeader>
+			   
+               <to uri="http://mybogusaddress.com"/>
+               <log message="${body}"/>
+               <to uri="xslt:libraries.xsl"/> 
+     </route>
+    
+    
+<!--
+__________________________________________________________________________________
+__________________________________________________________________________________
+      
+      Route : lookupLocationPolicyList
+      
+      Call to get a list of Locations
+      
+      Parameters :
+        clientID          ->  Http Header
+        sessionToken      ->  Http Header
+__________________________________________________________________________________
+__________________________________________________________________________________
+-->  
+  
+
+    <route id="getLocations" xmlns="http://camel.apache.org/schema/spring" trace="true">
+        <from uri="restlet:http://0.0.0.0:8089/lookupLocationPolicyList?restletMethod=GET"/> 
+      
+        <log message= "getLocations fired"/>
+         <setHeader headerName="CamelHttpMethod">
+            <constant>GET</constant>
+               </setHeader>
+               <setHeader headerName="x-sirs-clientID">
+                 <constant>SymWSTestClient</constant>
+               </setHeader>
+               <setHeader headerName="CamelHttpUri">
+                 <!-- <constant>http://localhost:8080/sirsiws/rest/admin/lookupLibraryPolicyList</constant> -->
+                 <constant>http://libsvr41.lib.virginia.edu:8083/sirsiws/rest/admin/lookupLocationPolicyList</constant>
+               </setHeader>
+               
+               <setHeader headerName="x-sirs-policyID">
+                 <constant>1</constant>
+			   </setHeader>
+			   <setHeader headerName="Accept">
+        		<constant>application/xml</constant>
+      		   </setHeader>
+			   
+               <to uri="http://mybogusaddress.com"/>
+               <log message="${body}"/>
+               <to uri="xslt:locations.xsl"/> 
+     </route>
+
+
+
+ <!--
+=================================================================================
+      
+      Route : browseCallShelf
+      
+      Call to get nearest neighbors on shelf. Getting some very strange responses from Sirsi WS, error 
+      on one call, but works next time. Trying to sort out issues and determine cause of failures.
+      
+      Parameters : 
+        clientID      ->  Http Header
+        sessionToken  ->  Http Header
+        itemID        ->  Query String
+        browseSize    ->  Query String
+        
+=================================================================================
+-->  
+    
+    <route id="browseCallShelf" xmlns="http://camel.apache.org/schema/spring" trace="true" streamCache="true">
+    <from uri="restlet:http://0.0.0.0:8089/browseCallShelf/{item}?restletMethod=GET"/>
+    	<choice>
+        	<when>
+            	<simple>${headers.item}</simple>
+               	<setHeader headerName="itemID">
+                 	<simple>${headers.item}</simple>
+               	</setHeader>
+ 		        <setHeader headerName="CamelHttpMethod">
+		          <constant>GET</constant>
+		        </setHeader>
+		        <setHeader headerName="x-sirs-clientID">
+		          <constant>SymWSTestClient</constant>
+		        </setHeader>
+		        <setHeader headerName="CamelHttpUri">
+		          <constant>http://libsvr41.lib.virginia.edu:8083/sirsiws/rest/circulation/browseCallShelf</constant> 
+		        </setHeader>
+		        <setHeader headerName="sessionToken">
+		          <method bean="GodToken" method="getCurrentWebSessionToken"/>
+		        </setHeader>
+ 		        <setHeader headerName="Accept">
+		          <constant>application/xml</constant>
+		        </setHeader>
+                <setHeader headerName="CamelHttpQuery">
+                  <simple>clientID=SymWSTestClient&amp;itemID=${headers.item}&amp;sessionToken=${headers.sessionToken}</simple>
+                </setHeader>
+		        
+		        <to uri="http://mybogusaddress.com"/>
+            </when>
+            <otherwise>
+              <log message="ERROR browseCallShelf: No ItemID supplied" />
+              <transform>
+                <constant>ERROR browseCallShelf: No ItemID supplied</constant>
+              </transform>
+            </otherwise>
+          </choice>
+    </route>
+    
+   </camelContext> 
+   </beans>

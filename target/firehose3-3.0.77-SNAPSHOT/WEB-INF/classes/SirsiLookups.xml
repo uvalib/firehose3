@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lookups>
+	<profile>
+		<policyvalue id="1" pval="FACULTY USE"/>
+		<policyvalue id="2" pval="FACULTY" />
+		<policyvalue id="3" pval="UNDERGRAD" />
+		<policyvalue id="4" pval="GRAD"/>
+	</profile>
+	<canhold>
+		<holdvalue id="1" pval="A copy of this item is currently available." />
+		<holdvalue id="2" pval="Yes this catalog item can be held." />
+		<holdvalue id="3" pval="This item is not eligible for holds or recalls." />
+		<holdvalue id="3" pval="Some specific holdings can be held or recalled." />
+	</canhold>
+	<holdtype>
+		<type id="A" pval="Call Number Hold"/>
+		<type id="C" pval="Copy Hold"/>
+		<type id="T" pval="Title Hold"/>
+	</holdtype>
+	<holdstatus>
+		<statusvalue id="1" pval="Inactive"/>
+		<statusvalue id="2" pval="Active"/>
+	</holdstatus>
+	<recallstatus>
+		<statusvalue id="1" pval="Allow"/>
+		<statusvalue id="2" pval="Hold"/>
+		<statusvalue id="3" pval="Rush"/>
+	</recallstatus>
+	<inactivereason>
+		<reason id="0" pval="None"/>
+		<reason id="1" pval="Cancelled"/>
+		<reason id="2" pval="Expired"/>
+		<reason id="4" pval="Filled"/>
+	</inactivereason>
+	<canrenew>
+		<renewvalue id="10" pval="This item was recalled, and cannot be renewed." />
+		<renewvalue id="11" pval="This item has been renewed the maximum number of times." />
+		<renewvalue id="12" pval="This item has no due date, there is no reason to renew." />
+		<renewvalue id="12p" pval="Current Periodicals may not be renewed." />
+		<renewvalue id="13" pval="This item may be renewed." />		
+		<renewvalue id="14" pval="This is a non-circulating item, and can not be renewed here."/>
+		<renewvalue id="15" pval="This type of item is not available for renewals." />
+		<renewvalue id="16" pval="This user is barred." />
+	</canrenew>
+	<location_holdable>
+		<holdvalue id="0" pval="NO"/> 	<!-- ITEMS from this location can not be held or recalled -->
+		<holdvalue id="1" pval="YES"/> 	<!-- Items from this location can be recalled. -->
+		<holdvalue id="2" pval="LAST"/> <!-- These items should be recalled only when no other are available. -->
+	</location_holdable>
+	<circulate>
+		<value id="Y" pval="YES"/>
+		<value id="N" pval="NO"/>
+		<value id="M" pval="MAYBE"/>
+	</circulate>
+	<userstatus>
+		<status id="1" pval="Barred"/>
+		<status id="2" pval="OK"/>
+		<status id="4" pval="Delinquent"/>
+	</userstatus>
+</lookups>
